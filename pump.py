@@ -141,8 +141,9 @@ class Pump:
 
     def resume(self, position_steps: int) -> None:
         """Restore a known position without homing. Transitions STARTUP → IDLE."""
-        self._position_steps = position_steps
-        self._transition(PumpState.IDLE)
+        with self._lock:
+            self._position_steps = position_steps
+            self._transition(PumpState.IDLE)
 
 
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -170,8 +171,8 @@ class LimitSwitchWorker(QThread):
 
 
 class DispenseWorker(QThread):
-    finished = pyqtSignal(int)          # pump_id
-    error    = pyqtSignal(int, str)     # pump_id, error message
+    finished = pyqtSignal(int)               # pump_id
+    error    = pyqtSignal(int, str, bool)    # pump_id, error message, is_validation_error
 
     def __init__(self, pump: "Pump", volume_ml: float, flow_rate_ml_sec: float):
         super().__init__()
@@ -179,12 +180,19 @@ class DispenseWorker(QThread):
         self._volume_ml = volume_ml
         self._flow_rate_ml_sec = flow_rate_ml_sec
 
+    def cancel(self) -> None:
+        # Dispense cannot be interrupted mid-flight; this is a no-op.
+        # The caller should call stop() on the Pump directly to halt motion.
+        pass
+
     def run(self):
         try:
             self._pump.dispense(self._volume_ml, self._flow_rate_ml_sec)
             self.finished.emit(self._pump.pump_id)
+        except ValidationError as exc:
+            self.error.emit(self._pump.pump_id, str(exc), True)
         except Exception as exc:
-            self.error.emit(self._pump.pump_id, str(exc))
+            self.error.emit(self._pump.pump_id, str(exc), False)
 
 
 class HomingWorker(QThread):
@@ -194,6 +202,11 @@ class HomingWorker(QThread):
     def __init__(self, pump: "Pump"):
         super().__init__()
         self._pump = pump
+
+    def cancel(self) -> None:
+        # Dispense cannot be interrupted mid-flight; this is a no-op.
+        # The caller should call stop() on the Pump directly to halt motion.
+        pass
 
     def run(self):
         try:

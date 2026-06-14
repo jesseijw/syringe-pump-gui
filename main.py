@@ -78,21 +78,24 @@ class MainWindow(QMainWindow):
         panel = self._panels[pump_id]
         panel.set_state(pump.state)
         panel.update_volume(pump.current_volume_ml)
+        # Remove stale dispense worker reference
+        self._workers.pop(pump_id, None)
         # Start limit switch polling
         limit_worker = LimitSwitchWorker(pump_id, pump._controller)
         limit_worker.limit_hit.connect(self._on_limit_hit)
         self._workers[f"limit_{pump_id}"] = limit_worker
         limit_worker.start()
 
-    def _on_dispense_error(self, pump_id: int, msg: str):
+    def _on_dispense_error(self, pump_id: int, msg: str, is_validation_error: bool):
         pump  = self._pumps[pump_id]
         panel = self._panels[pump_id]
         panel.set_state(pump.state)
         panel.update_volume(pump.current_volume_ml)
-        if pump.state == PumpState.IDLE:
-            # Validation error before state change - show warning
+        # Remove stale dispense worker reference
+        self._workers.pop(pump_id, None)
+        if is_validation_error:
             QMessageBox.warning(self, "Invalid Input", msg)
-        # If pump.state == ERROR, the panel already shows ERROR from set_state above
+        # If not validation error, panel.set_state(pump.state) already set ERROR
 
     def _on_stop(self, pump_id: int):
         if pump_id in self._workers:
@@ -107,6 +110,8 @@ class MainWindow(QMainWindow):
 
     def _home_all(self):
         for pid, pump in self._pumps.items():
+            if pid in self._homing_workers and self._homing_workers[pid].isRunning():
+                continue  # homing already in progress for this pump
             self._panels[pid].set_state(PumpState.HOMING)
             worker = HomingWorker(pump)
             worker.finished.connect(self._on_homing_finished)
@@ -127,6 +132,7 @@ class MainWindow(QMainWindow):
             if hasattr(w, "cancel"):
                 w.cancel()
             w.wait()
+        # Homing workers cannot be interrupted mid-flight; wait for them to finish
         for w in getattr(self, "_homing_workers", {}).values():
             w.wait()
         event.accept()
