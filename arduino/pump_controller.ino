@@ -27,7 +27,7 @@
 #define PUMP2_FWD_PIN    11
 
 #define PUMP3_STEP_PIN   12
-#define PUMP3_DIR_PIN    13
+#define PUMP3_DIR_PIN    A3   // Fix 6: was 13 (built-in LED), changed to A3
 #define PUMP3_ENABLE_PIN A0
 #define PUMP3_AFT_PIN    A1
 #define PUMP3_FWD_PIN    A2
@@ -45,6 +45,9 @@ const int ENABLE_PINS[3] = {PUMP1_ENABLE_PIN, PUMP2_ENABLE_PIN, PUMP3_ENABLE_PIN
 const int AFT_PINS[3]    = {PUMP1_AFT_PIN,    PUMP2_AFT_PIN,    PUMP3_AFT_PIN};
 const int FWD_PINS[3]    = {PUMP1_FWD_PIN,    PUMP2_FWD_PIN,    PUMP3_FWD_PIN};
 
+// Fix 2: homing state array — true while a stepper is seeking the aft limit
+bool homing[3] = {false, false, false};
+
 bool readLimit(int idx, bool forward) {
     int pin  = forward ? FWD_PINS[idx] : AFT_PINS[idx];
     bool raw = (digitalRead(pin) == LOW);
@@ -53,6 +56,7 @@ bool readLimit(int idx, bool forward) {
 
 void setup() {
     Serial.begin(115200);
+    Serial.setTimeout(20);   // Fix 1: 20 ms keeps readBytesUntil from stalling steppers
     for (int i = 0; i < 3; i++) {
         pinMode(ENABLE_PINS[i], OUTPUT);
         digitalWrite(ENABLE_PINS[i], HIGH);   // disabled (active LOW)
@@ -64,50 +68,87 @@ void setup() {
 }
 
 void loop() {
-    for (int i = 0; i < 3; i++) steppers[i].run();
+    // Fix 2: drive each stepper with the appropriate motion mode
+    for (int i = 0; i < 3; i++) {
+        if (homing[i]) {
+            if (readLimit(i, false)) {   // aft limit hit → homing done
+                steppers[i].stop();
+                homing[i] = false;
+            } else {
+                steppers[i].runSpeed();  // continue constant-speed aft motion
+            }
+        } else {
+            steppers[i].run();           // normal position-based motion
+        }
+    }
 
     if (!Serial.available()) return;
 
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
+    // Fix 3: fixed char buffer instead of String — avoids heap fragmentation
+    char buf[64];
+    int len = Serial.readBytesUntil('\n', buf, sizeof(buf) - 1);
+    if (len == 0) return;
+    buf[len] = '\0';
+    // strip trailing '\r' if present
+    if (len > 0 && buf[len-1] == '\r') buf[--len] = '\0';
 
-    int c1 = cmd.indexOf(':');
-    String command = cmd.substring(0, c1);
-    String rest    = cmd.substring(c1 + 1);
-    int id  = rest.substring(0, rest.indexOf(':')).toInt();
+    char *tok = strtok(buf, ":");
+    if (!tok) return;
+    char command[20];
+    strncpy(command, tok, sizeof(command) - 1);
+    command[sizeof(command)-1] = '\0';
+
+    tok = strtok(NULL, ":");
+    if (!tok) { Serial.println("ERR:bad_format"); return; }
+    int id  = atoi(tok);
     int idx = id - 1;
 
     if (idx < 0 || idx > 2) { Serial.println("ERR:bad_id"); return; }
 
-    if (command == "ENERGIZE") {
+    if (strcmp(command, "ENERGIZE") == 0) {
         digitalWrite(ENABLE_PINS[idx], LOW);
         Serial.println("OK");
 
-    } else if (command == "DEENERGIZE") {
+    } else if (strcmp(command, "DEENERGIZE") == 0) {
         digitalWrite(ENABLE_PINS[idx], HIGH);
         Serial.println("OK");
 
-    } else if (command == "STOP") {
+    // Fix 4: STOP decelerates using AccelStepper's configured acceleration profile.
+    // This is intentional for mechanical safety — syringe plungers should not hard-stop.
+    } else if (strcmp(command, "STOP") == 0) {
+        homing[idx] = false;   // Fix 2: cancel any in-progress homing
         steppers[idx].stop();
         Serial.println("OK");
 
-    } else if (command == "HOME") {
+    } else if (strcmp(command, "HOME") == 0) {
         steppers[idx].setSpeed(-200);   // slow aft movement
-        steppers[idx].runSpeed();
+        homing[idx] = true;             // Fix 2: let loop() drive the motion
         Serial.println("OK");
 
-    } else if (command == "MOVE") {
-        // MOVE:<id>:<steps>:<steps_per_sec>
-        int c2   = rest.indexOf(':');
-        int c3   = rest.indexOf(':', c2 + 1);
-        long steps  = rest.substring(c2 + 1, c3).toInt();
-        float speed = rest.substring(c3 + 1).toFloat();
+    } else if (strcmp(command, "MOVE") == 0) {
+        tok = strtok(NULL, ":");
+        if (!tok) { Serial.println("ERR:bad_format"); return; }
+        long steps = atol(tok);
+        tok = strtok(NULL, ":");
+        if (!tok) { Serial.println("ERR:bad_format"); return; }
+        float speed = atof(tok);
+        // Fix 5: Safety — refuse move if already at the limit in the commanded direction
+        if (steps > 0 && readLimit(idx, true)) {
+            Serial.println("ERR:at_fwd_limit");
+            return;
+        }
+        if (steps < 0 && readLimit(idx, false)) {
+            Serial.println("ERR:at_aft_limit");
+            return;
+        }
+        homing[idx] = false;
         steppers[idx].setMaxSpeed(speed);
         steppers[idx].move(steps);
         Serial.println("OK");
 
-    } else if (command == "LIMIT") {
-        bool fwd = rest.endsWith("forward");
+    } else if (strcmp(command, "LIMIT") == 0) {
+        tok = strtok(NULL, ":");
+        bool fwd = (tok && strcmp(tok, "forward") == 0);
         Serial.println(readLimit(idx, fwd) ? "1" : "0");
 
     } else {
