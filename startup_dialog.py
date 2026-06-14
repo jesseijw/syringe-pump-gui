@@ -7,14 +7,14 @@ class StartupDialog(QDialog):
     HOME   = 1
     RESUME = 2
 
-    def __init__(self, detected_ids: list, parent=None):
+    def __init__(self, detected_ids: "list[int]", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Syringe Pump Controller — Startup")
         self.setModal(True)
         self._choice = None
         self._build_ui(detected_ids)
 
-    def _build_ui(self, detected_ids: list):
+    def _build_ui(self, detected_ids: "list[int]"):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("<b>Controllers detected:</b>"))
 
@@ -39,5 +39,5 @@ class StartupDialog(QDialog):
         self.accept()
 
     @property
-    def choice(self) -> int:
+    def choice(self) -> "int | None":
         return self._choice
