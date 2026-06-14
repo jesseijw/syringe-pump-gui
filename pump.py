@@ -204,8 +204,7 @@ class HomingWorker(QThread):
         self._pump = pump
 
     def cancel(self) -> None:
-        # Dispense cannot be interrupted mid-flight; this is a no-op.
-        # The caller should call stop() on the Pump directly to halt motion.
+        # Homing cannot be interrupted mid-flight; this is a no-op.
         pass
 
     def run(self):
