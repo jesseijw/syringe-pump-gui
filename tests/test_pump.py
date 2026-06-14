@@ -163,3 +163,36 @@ def test_limit_worker_stops_when_cancelled(qapp, mock_ctrl):
     worker.cancel()
     worker.wait(500)
     assert not worker.isRunning()
+
+
+def test_pump_panel_constructs(qapp):
+    from pump_panel import PumpPanel
+    assert PumpPanel(pump_id=1) is not None
+
+
+def test_pump_panel_run_signal_emitted(qapp):
+    from pump_panel import PumpPanel
+    received = []
+    panel = PumpPanel(pump_id=2)
+    panel.set_state(PumpState.IDLE)
+    panel.run_requested.connect(lambda pid, fr, pv: received.append((pid, fr, pv)))
+    panel._run_btn.click()
+    assert len(received) == 1 and received[0][0] == 2
+
+
+def test_pump_panel_inputs_locked_when_running(qapp):
+    from pump_panel import PumpPanel
+    panel = PumpPanel(pump_id=1)
+    panel.set_state(PumpState.RUNNING)
+    assert not panel._flow_spin.isEnabled()
+    assert not panel._purge_spin.isEnabled()
+    assert not panel._run_btn.isEnabled()
+    assert panel._stop_btn.isEnabled()
+
+
+def test_pump_panel_update_volume(qapp):
+    from pump_panel import PumpPanel
+    panel = PumpPanel(pump_id=1)
+    panel.update_volume(7.5)
+    assert panel._volume_label.text() == "7.50"
+    assert panel._progress.value() == 500  # 7.5/15.0 × 1000
