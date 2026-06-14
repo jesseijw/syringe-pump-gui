@@ -71,8 +71,10 @@ void loop() {
     // Fix 2: drive each stepper with the appropriate motion mode
     for (int i = 0; i < 3; i++) {
         if (homing[i]) {
-            if (readLimit(i, false)) {   // aft limit hit → homing done
-                steppers[i].stop();
+            if (readLimit(i, false)) {   // aft limit hit → immediate halt
+                // setCurrentPosition zeroes the target in-place for an instant stop,
+                // avoiding the deceleration overshoot that stop() would produce.
+                steppers[i].setCurrentPosition(steppers[i].currentPosition());
                 homing[i] = false;
             } else {
                 steppers[i].runSpeed();  // continue constant-speed aft motion
