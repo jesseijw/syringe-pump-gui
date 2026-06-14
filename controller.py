@@ -83,15 +83,26 @@ class TicController(PumpController):
     def move(self, pump_id: int, steps: int, steps_per_sec: float) -> None:
         tic = self._tic(pump_id)
         tic.reset_command_timeout()
+        # Set speed limit before commanding position
+        try:
+            tic.set_speed_limit(int(steps_per_sec))
+        except AttributeError:
+            pass  # ticlib version may use a different API; speed set via Tic Control Center
         current = tic.get_variables().current_position
-        tic.set_target_position(current + steps)
-        # Poll until motion complete
+        target = current + steps
+        tic.set_target_position(target)
+        # Poll until motion completes
+        import time
+        timeout = abs(steps / steps_per_sec) * 3 + 10
+        deadline = time.monotonic() + timeout
         while True:
             tic.reset_command_timeout()
-            v = tic.get_variables()
-            if v.current_position == current + steps:
+            if tic.get_variables().current_position == target:
                 break
-            _time.sleep(0.02)
+            if time.monotonic() > deadline:
+                tic.halt_and_hold()
+                raise RuntimeError(f"Pump {pump_id} motion timeout")
+            time.sleep(0.1)
 
     def stop(self, pump_id: int) -> None:
         self._tic(pump_id).halt_and_hold()
@@ -145,7 +156,19 @@ class ArduinoController(PumpController):
         self._send(f"HOME:{pump_id}\n")
 
     def move(self, pump_id: int, steps: int, steps_per_sec: float) -> None:
-        self._send(f"MOVE:{pump_id}:{steps}:{int(steps_per_sec)}\n")
+        self._send(f"MOVE:{pump_id}:{steps}:{steps_per_sec:.2f}\n")
+        # Poll until motion completes
+        import time
+        timeout = abs(steps / steps_per_sec) * 3 + 10  # 3× expected duration + 10s buffer
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = int(self._send(f"DISTANCETOGO:{pump_id}\n").strip())
+            if remaining == 0:
+                break
+            if time.monotonic() > deadline:
+                self.stop(pump_id)
+                raise RuntimeError(f"Pump {pump_id} motion timeout after {timeout:.0f}s")
+            time.sleep(0.1)
 
     def stop(self, pump_id: int) -> None:
         self._ser.write(f"STOP:{pump_id}\n".encode())

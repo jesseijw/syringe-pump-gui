@@ -18,7 +18,7 @@ _STATE_COLORS = {
 
 
 class PumpPanel(QWidget):
-    run_requested  = pyqtSignal(int, float, float)  # pump_id, flow_rate, purge_vol
+    run_requested  = pyqtSignal(int, float, float)  # pump_id, volume_ml, flow_rate_ml_sec
     stop_requested = pyqtSignal(int)                # pump_id
 
     def __init__(self, pump_id: int, parent=None):
@@ -79,8 +79,8 @@ class PumpPanel(QWidget):
     def _on_run(self):
         self.run_requested.emit(
             self.pump_id,
-            self._flow_spin.value(),
-            self._purge_spin.value(),
+            self._purge_spin.value(),   # volume_ml (purge amount)
+            self._flow_spin.value(),    # flow_rate_ml_sec
         )
 
     def set_state(self, state: PumpState):

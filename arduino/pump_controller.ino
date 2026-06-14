@@ -153,6 +153,10 @@ void loop() {
         bool fwd = (tok && strcmp(tok, "forward") == 0);
         Serial.println(readLimit(idx, fwd) ? "1" : "0");
 
+    } else if (strcmp(command, "DISTANCETOGO") == 0) {
+        long d = steppers[idx].distanceToGo();
+        Serial.println(abs(d));
+
     } else {
         Serial.println("ERR:unknown_cmd");
     }

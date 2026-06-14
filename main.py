@@ -56,7 +56,7 @@ class MainWindow(QMainWindow):
             panel.run_requested.connect(self._on_run)
             panel.stop_requested.connect(self._on_stop)
 
-    def _on_run(self, pump_id: int, flow_rate: float, purge_vol: float):
+    def _on_run(self, pump_id: int, volume_ml: float, flow_rate_ml_sec: float):
         pump  = self._pumps[pump_id]
         panel = self._panels[pump_id]
 
@@ -66,7 +66,7 @@ class MainWindow(QMainWindow):
             self._workers[pump_id].wait()
 
         # Run dispense in background thread
-        worker = DispenseWorker(pump, purge_vol, flow_rate)
+        worker = DispenseWorker(pump, volume_ml, flow_rate_ml_sec)
         worker.finished.connect(self._on_dispense_finished)
         worker.error.connect(self._on_dispense_error)
         self._workers[pump_id] = worker
@@ -156,6 +156,11 @@ def main():
 
     pumps  = {pid: Pump(pid, ctrl) for pid in detected}
     panels = {pid: PumpPanel(pid) for pid in detected}
+
+    if not pumps:
+        from PyQt5.QtWidgets import QMessageBox
+        QMessageBox.warning(None, "No Pumps", "No pump controllers were detected. Check connections and restart.")
+        sys.exit(1)
 
     if dlg.choice == StartupDialog.HOME:
         for pid, pump in pumps.items():
