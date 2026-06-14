@@ -52,9 +52,17 @@ def test_homing_timeout_transitions_to_error(pump, mock_ctrl):
 def test_dispense_increments_position(pump, mock_ctrl):
     pump._state = PumpState.IDLE
     pump._position_steps = 0
+
+    def settings_side_effect(k):
+        return {
+            "MAX_FLOW_RATE_ML_SEC": 5.0,
+            "MIN_FLOW_RATE_ML_SEC": 0.01,
+            "PUMP_POSITIONS": {"1": 0, "2": 0, "3": 0},
+        }.get(k, 5.0)
+
     with patch("units.ml_to_steps", return_value=100), \
          patch("units.flow_rate_to_steps_per_sec", return_value=50.0), \
-         patch("settings.save"), patch("settings.get", return_value=5.0):
+         patch("settings.save"), patch("settings.get", side_effect=settings_side_effect):
         pump.dispense(volume_ml=1.0, flow_rate_ml_sec=0.5)
     assert pump.position_steps == 100
 

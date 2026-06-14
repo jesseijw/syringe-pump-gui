@@ -72,8 +72,8 @@ class Pump:
         self._transition(PumpState.IDLE)
 
     def dispense(self, volume_ml: float, flow_rate_ml_sec: float) -> None:
-        max_flow = config.MAX_FLOW_RATE_ML_SEC
-        min_flow = config.MIN_FLOW_RATE_ML_SEC
+        max_flow = settings.get("MAX_FLOW_RATE_ML_SEC")
+        min_flow = settings.get("MIN_FLOW_RATE_ML_SEC")
         if not (min_flow <= flow_rate_ml_sec <= max_flow):
             raise ValidationError(
                 f"Flow rate {flow_rate_ml_sec} mL/s out of range [{min_flow}, {max_flow}]"
