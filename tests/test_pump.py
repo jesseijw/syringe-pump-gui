@@ -167,14 +167,13 @@ def test_limit_worker_stops_when_cancelled(qapp, mock_ctrl):
 
 def test_pump_panel_constructs(qapp):
     from pump_panel import PumpPanel
-    assert PumpPanel(pump_id=1) is not None
+    PumpPanel(pump_id=1)
 
 
 def test_pump_panel_run_signal_emitted(qapp):
     from pump_panel import PumpPanel
     received = []
     panel = PumpPanel(pump_id=2)
-    panel.set_state(PumpState.IDLE)
     panel.run_requested.connect(lambda pid, fr, pv: received.append((pid, fr, pv)))
     panel._run_btn.click()
     assert len(received) == 1 and received[0][0] == 2
@@ -195,4 +194,28 @@ def test_pump_panel_update_volume(qapp):
     panel = PumpPanel(pump_id=1)
     panel.update_volume(7.5)
     assert panel._volume_label.text() == "7.50"
-    assert panel._progress.value() == 500  # 7.5/15.0 × 1000
+    expected_progress = int(7.5 / config.FULL_VOLUME_ML * 1000)
+    assert panel._progress.value() == expected_progress
+
+
+def test_pump_panel_update_volume_clamps(qapp):
+    from pump_panel import PumpPanel
+    panel = PumpPanel(pump_id=1)
+    panel.update_volume(-1.0)
+    assert panel._progress.value() == 0
+    panel.update_volume(999.0)
+    assert panel._progress.value() == 1000
+
+
+@pytest.mark.parametrize("state", [
+    PumpState.HOMING,
+    PumpState.STOPPING,
+    PumpState.EMPTY,
+    PumpState.ERROR,
+])
+def test_pump_panel_all_buttons_disabled_in_inactive_states(qapp, state):
+    from pump_panel import PumpPanel
+    panel = PumpPanel(pump_id=1)
+    panel.set_state(state)
+    assert not panel._run_btn.isEnabled()
+    assert not panel._stop_btn.isEnabled()

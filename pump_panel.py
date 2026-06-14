@@ -94,6 +94,7 @@ class PumpPanel(QWidget):
         self._flow_spin.setEnabled(is_idle)
         self._purge_spin.setEnabled(is_idle)
         self._run_btn.setEnabled(is_idle)
+        # EMPTY locks all buttons — operator re-homes via main window "Home All" button
         self._stop_btn.setEnabled(state == PumpState.RUNNING)
 
     def update_volume(self, volume_ml: float):
