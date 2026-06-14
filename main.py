@@ -1,0 +1,137 @@
+import sys
+import config
+import settings as _settings
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget,
+    QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+)
+from controller import TicController, ArduinoController
+from pump import Pump, LimitSwitchWorker
+from pump_panel import PumpPanel
+from startup_dialog import StartupDialog
+from settings_dialog import SettingsDialog
+from state import PumpState
+
+
+def _make_controller():
+    return TicController() if config.BACKEND == "tic" else ArduinoController()
+
+
+class MainWindow(QMainWindow):
+
+    def __init__(self, pumps: dict, panels: dict):
+        super().__init__()
+        self.setWindowTitle("Syringe Pump Controller")
+        self._pumps   = pumps
+        self._panels  = panels
+        self._workers: dict = {}
+        self._build_ui()
+        self._wire_signals()
+
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("<h2>Syringe Pump Controller</h2>"))
+        top.addStretch()
+        settings_btn = QPushButton("⚙ Settings")
+        settings_btn.clicked.connect(self._open_settings)
+        top.addWidget(settings_btn)
+        root.addLayout(top)
+
+        self._home_btn = QPushButton("Home All Pumps")
+        self._home_btn.clicked.connect(self._home_all)
+        root.addWidget(self._home_btn)
+
+        panels_row = QHBoxLayout()
+        for pid in sorted(self._panels):
+            panels_row.addWidget(self._panels[pid])
+        root.addLayout(panels_row)
+
+    def _wire_signals(self):
+        for pid, panel in self._panels.items():
+            panel.run_requested.connect(self._on_run)
+            panel.stop_requested.connect(self._on_stop)
+
+    def _on_run(self, pump_id: int, flow_rate: float, purge_vol: float):
+        pump  = self._pumps[pump_id]
+        panel = self._panels[pump_id]
+        try:
+            pump.dispense(purge_vol, flow_rate)
+        except Exception as exc:
+            panel.set_state(PumpState.ERROR)
+            return
+        panel.set_state(pump.state)
+        panel.update_volume(pump.current_volume_ml)
+        worker = LimitSwitchWorker(pump_id, pump._controller)
+        worker.limit_hit.connect(self._on_limit_hit)
+        self._workers[pump_id] = worker
+        worker.start()
+
+    def _on_stop(self, pump_id: int):
+        if pump_id in self._workers:
+            self._workers[pump_id].cancel()
+        self._pumps[pump_id].stop()
+        self._panels[pump_id].set_state(self._pumps[pump_id].state)
+
+    def _on_limit_hit(self, pump_id: int):
+        self._pumps[pump_id].mark_empty()
+        self._panels[pump_id].set_state(PumpState.EMPTY)
+        self._panels[pump_id].update_volume(0.0)
+
+    def _home_all(self):
+        for pid, pump in self._pumps.items():
+            self._panels[pid].set_state(PumpState.HOMING)
+            try:
+                pump.home()
+                self._panels[pid].set_state(PumpState.IDLE)
+                self._panels[pid].update_volume(pump.current_volume_ml)
+            except Exception:
+                self._panels[pid].set_state(PumpState.ERROR)
+
+    def _open_settings(self):
+        SettingsDialog(self).exec_()
+
+
+def main():
+    app = QApplication(sys.argv)
+    ctrl = _make_controller()
+
+    try:
+        detected = ctrl.detect()
+    except Exception:
+        detected = []
+
+    dlg = StartupDialog(detected_ids=detected)
+    if dlg.exec_() != StartupDialog.Accepted:
+        sys.exit(0)
+
+    pumps  = {pid: Pump(pid, ctrl) for pid in detected}
+    panels = {pid: PumpPanel(pid) for pid in detected}
+
+    if dlg.choice == StartupDialog.HOME:
+        for pid, pump in pumps.items():
+            panels[pid].set_state(PumpState.HOMING)
+            try:
+                pump.home()
+                panels[pid].set_state(PumpState.IDLE)
+                panels[pid].update_volume(pump.current_volume_ml)
+            except Exception:
+                panels[pid].set_state(PumpState.ERROR)
+    else:
+        saved = _settings.get("PUMP_POSITIONS")
+        for pid, pump in pumps.items():
+            pump._state = PumpState.IDLE
+            pump._position_steps = int(saved.get(str(pid), 0))
+            panels[pid].set_state(PumpState.IDLE)
+            panels[pid].update_volume(pump.current_volume_ml)
+
+    win = MainWindow(pumps=pumps, panels=panels)
+    win.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()
