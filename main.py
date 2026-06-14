@@ -3,10 +3,10 @@ import config
 import settings as _settings
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox,
 )
 from controller import TicController, ArduinoController
-from pump import Pump, LimitSwitchWorker
+from pump import Pump, LimitSwitchWorker, DispenseWorker, HomingWorker
 from pump_panel import PumpPanel
 from startup_dialog import StartupDialog
 from settings_dialog import SettingsDialog
@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
         self._pumps   = pumps
         self._panels  = panels
         self._workers: dict = {}
+        self._homing_workers: dict = {}
         self._build_ui()
         self._wire_signals()
 
@@ -58,17 +59,40 @@ class MainWindow(QMainWindow):
     def _on_run(self, pump_id: int, flow_rate: float, purge_vol: float):
         pump  = self._pumps[pump_id]
         panel = self._panels[pump_id]
-        try:
-            pump.dispense(purge_vol, flow_rate)
-        except Exception as exc:
-            panel.set_state(PumpState.ERROR)
-            return
+
+        # Cancel and wait on any old dispense worker for this pump
+        if pump_id in self._workers:
+            self._workers[pump_id].cancel()
+            self._workers[pump_id].wait()
+
+        # Run dispense in background thread
+        worker = DispenseWorker(pump, purge_vol, flow_rate)
+        worker.finished.connect(self._on_dispense_finished)
+        worker.error.connect(self._on_dispense_error)
+        self._workers[pump_id] = worker
+        panel.set_state(PumpState.RUNNING)
+        worker.start()
+
+    def _on_dispense_finished(self, pump_id: int):
+        pump  = self._pumps[pump_id]
+        panel = self._panels[pump_id]
         panel.set_state(pump.state)
         panel.update_volume(pump.current_volume_ml)
-        worker = LimitSwitchWorker(pump_id, pump._controller)
-        worker.limit_hit.connect(self._on_limit_hit)
-        self._workers[pump_id] = worker
-        worker.start()
+        # Start limit switch polling
+        limit_worker = LimitSwitchWorker(pump_id, pump._controller)
+        limit_worker.limit_hit.connect(self._on_limit_hit)
+        self._workers[f"limit_{pump_id}"] = limit_worker
+        limit_worker.start()
+
+    def _on_dispense_error(self, pump_id: int, msg: str):
+        pump  = self._pumps[pump_id]
+        panel = self._panels[pump_id]
+        panel.set_state(pump.state)
+        panel.update_volume(pump.current_volume_ml)
+        if pump.state == PumpState.IDLE:
+            # Validation error before state change - show warning
+            QMessageBox.warning(self, "Invalid Input", msg)
+        # If pump.state == ERROR, the panel already shows ERROR from set_state above
 
     def _on_stop(self, pump_id: int):
         if pump_id in self._workers:
@@ -84,12 +108,28 @@ class MainWindow(QMainWindow):
     def _home_all(self):
         for pid, pump in self._pumps.items():
             self._panels[pid].set_state(PumpState.HOMING)
-            try:
-                pump.home()
-                self._panels[pid].set_state(PumpState.IDLE)
-                self._panels[pid].update_volume(pump.current_volume_ml)
-            except Exception:
-                self._panels[pid].set_state(PumpState.ERROR)
+            worker = HomingWorker(pump)
+            worker.finished.connect(self._on_homing_finished)
+            worker.error.connect(self._on_homing_error)
+            self._homing_workers[pid] = worker
+            worker.start()
+
+    def _on_homing_finished(self, pump_id: int):
+        pump = self._pumps[pump_id]
+        self._panels[pump_id].set_state(PumpState.IDLE)
+        self._panels[pump_id].update_volume(pump.current_volume_ml)
+
+    def _on_homing_error(self, pump_id: int, msg: str):
+        self._panels[pump_id].set_state(PumpState.ERROR)
+
+    def closeEvent(self, event):
+        for w in self._workers.values():
+            if hasattr(w, "cancel"):
+                w.cancel()
+            w.wait()
+        for w in getattr(self, "_homing_workers", {}).values():
+            w.wait()
+        event.accept()
 
     def _open_settings(self):
         SettingsDialog(self).exec_()
@@ -123,8 +163,7 @@ def main():
     else:
         saved = _settings.get("PUMP_POSITIONS")
         for pid, pump in pumps.items():
-            pump._state = PumpState.IDLE
-            pump._position_steps = int(saved.get(str(pid), 0))
+            pump.resume(int(saved.get(str(pid), 0)))
             panels[pid].set_state(PumpState.IDLE)
             panels[pid].update_volume(pump.current_volume_ml)
 

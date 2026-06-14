@@ -139,6 +139,11 @@ class Pump:
             self._transition(PumpState.STOPPING)
             self._transition(PumpState.EMPTY)
 
+    def resume(self, position_steps: int) -> None:
+        """Restore a known position without homing. Transitions STARTUP → IDLE."""
+        self._position_steps = position_steps
+        self._transition(PumpState.IDLE)
+
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
@@ -162,3 +167,37 @@ class LimitSwitchWorker(QThread):
                 self.limit_hit.emit(self._pump_id)
                 return
             time.sleep(self._interval)
+
+
+class DispenseWorker(QThread):
+    finished = pyqtSignal(int)          # pump_id
+    error    = pyqtSignal(int, str)     # pump_id, error message
+
+    def __init__(self, pump: "Pump", volume_ml: float, flow_rate_ml_sec: float):
+        super().__init__()
+        self._pump = pump
+        self._volume_ml = volume_ml
+        self._flow_rate_ml_sec = flow_rate_ml_sec
+
+    def run(self):
+        try:
+            self._pump.dispense(self._volume_ml, self._flow_rate_ml_sec)
+            self.finished.emit(self._pump.pump_id)
+        except Exception as exc:
+            self.error.emit(self._pump.pump_id, str(exc))
+
+
+class HomingWorker(QThread):
+    finished = pyqtSignal(int)          # pump_id
+    error    = pyqtSignal(int, str)     # pump_id, error message
+
+    def __init__(self, pump: "Pump"):
+        super().__init__()
+        self._pump = pump
+
+    def run(self):
+        try:
+            self._pump.home()
+            self.finished.emit(self._pump.pump_id)
+        except Exception as exc:
+            self.error.emit(self._pump.pump_id, str(exc))
