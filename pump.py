@@ -145,6 +145,13 @@ class Pump:
             self._position_steps = position_steps
             self._transition(PumpState.IDLE)
 
+    def set_initial_volume(self, volume_ml: float) -> None:
+        """Set current volume directly (e.g. partially-filled syringe). Must be IDLE."""
+        steps = units.ml_to_steps(config.FULL_VOLUME_ML - volume_ml)
+        with self._lock:
+            self._position_steps = steps
+        settings.save({"PUMP_POSITIONS": {str(self.pump_id): steps}})
+
 
 from PyQt5.QtCore import QThread, pyqtSignal
 

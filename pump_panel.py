@@ -18,8 +18,9 @@ _STATE_COLORS = {
 
 
 class PumpPanel(QWidget):
-    run_requested  = pyqtSignal(int, float, float)  # pump_id, volume_ml, flow_rate_ml_sec
-    stop_requested = pyqtSignal(int)                # pump_id
+    run_requested         = pyqtSignal(int, float, float)  # pump_id, volume_ml, flow_rate_ml_sec
+    stop_requested        = pyqtSignal(int)                # pump_id
+    initial_volume_set    = pyqtSignal(int, float)         # pump_id, volume_ml
 
     def __init__(self, pump_id: int, parent=None):
         super().__init__(parent)
@@ -39,13 +40,25 @@ class PumpPanel(QWidget):
         layout.addWidget(self._status)
 
         vol_row = QHBoxLayout()
-        vol_row.addWidget(QLabel("Volume (mL):"))
+        vol_row.addWidget(QLabel("Current Volume (mL):"))
         self._volume_label = QLabel(f"{config.FULL_VOLUME_ML:.1f}")
         vol_row.addWidget(self._volume_label)
         layout.addLayout(vol_row)
 
+        init_row = QHBoxLayout()
+        init_row.addWidget(QLabel("Initial Volume (mL):"))
+        self._init_volume_spin = QDoubleSpinBox()
+        self._init_volume_spin.setRange(0.0, config.FULL_VOLUME_ML)
+        self._init_volume_spin.setDecimals(2)
+        self._init_volume_spin.setValue(config.FULL_VOLUME_ML)
+        self._set_volume_btn = QPushButton("Set")
+        self._set_volume_btn.clicked.connect(self._on_set_volume)
+        init_row.addWidget(self._init_volume_spin)
+        init_row.addWidget(self._set_volume_btn)
+        layout.addLayout(init_row)
+
         flow_row = QHBoxLayout()
-        flow_row.addWidget(QLabel("Flow (mL/s):"))
+        flow_row.addWidget(QLabel("Flow Rate (mL/s):"))
         self._flow_spin = QDoubleSpinBox()
         self._flow_spin.setRange(0.01, 5.0)
         self._flow_spin.setDecimals(3)
@@ -54,7 +67,7 @@ class PumpPanel(QWidget):
         layout.addLayout(flow_row)
 
         purge_row = QHBoxLayout()
-        purge_row.addWidget(QLabel("Purge (mL):"))
+        purge_row.addWidget(QLabel("Purge Amount (mL):"))
         self._purge_spin = QDoubleSpinBox()
         self._purge_spin.setRange(0.0, config.FULL_VOLUME_ML)
         self._purge_spin.setDecimals(2)
@@ -76,6 +89,9 @@ class PumpPanel(QWidget):
         btn_row.addWidget(self._stop_btn)
         layout.addLayout(btn_row)
 
+    def _on_set_volume(self):
+        self.initial_volume_set.emit(self.pump_id, self._init_volume_spin.value())
+
     def _on_run(self):
         self.run_requested.emit(
             self.pump_id,
@@ -91,6 +107,8 @@ class PumpPanel(QWidget):
             f"background-color: {color}; color: white;"
         )
         is_idle = (state == PumpState.IDLE)
+        self._init_volume_spin.setEnabled(is_idle)
+        self._set_volume_btn.setEnabled(is_idle)
         self._flow_spin.setEnabled(is_idle)
         self._purge_spin.setEnabled(is_idle)
         self._run_btn.setEnabled(is_idle)

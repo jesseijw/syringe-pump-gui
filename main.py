@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):
         for pid, panel in self._panels.items():
             panel.run_requested.connect(self._on_run)
             panel.stop_requested.connect(self._on_stop)
+            panel.initial_volume_set.connect(self._on_initial_volume_set)
 
     def _on_run(self, pump_id: int, volume_ml: float, flow_rate_ml_sec: float):
         pump  = self._pumps[pump_id]
@@ -96,6 +97,10 @@ class MainWindow(QMainWindow):
         if is_validation_error:
             QMessageBox.warning(self, "Invalid Input", msg)
         # If not validation error, panel.set_state(pump.state) already set ERROR
+
+    def _on_initial_volume_set(self, pump_id: int, volume_ml: float):
+        self._pumps[pump_id].set_initial_volume(volume_ml)
+        self._panels[pump_id].update_volume(volume_ml)
 
     def _on_stop(self, pump_id: int):
         if pump_id in self._workers:
